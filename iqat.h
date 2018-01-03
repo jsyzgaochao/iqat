@@ -8,6 +8,8 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <malloc.h>
+#include <sys/time.h>
+#include <sys/stat.h>
 
 extern "C"
 {
@@ -39,12 +41,14 @@ typedef struct
     double *y_psnr, *u_psnr, *v_psnr, *psnr, *ssim;
     double psnr_mean, y_psnr_mean, u_psnr_mean, v_psnr_mean, ssim_mean;
     double psnr_stdv, ssim_stdv;
+    unsigned long int size;
 } VideoInfo;
 
 typedef struct
 {
     int width;
     int height;
+    int frames_num;
     bool log;
     VideoInfo *ref_video;
     VideoInfo *video[256];
@@ -73,6 +77,7 @@ enum
 #define strcasecmp stricmp
 #endif
 
+unsigned long get_msec();
 void print_help(char *strAppName, const char *strErrorMessage, ...);
 int check_inputfile(Params *params);
 void set_err_code(int errcode, Params* params);

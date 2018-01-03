@@ -1,6 +1,13 @@
 #include <omp.h>
 #include "iqat.h"
 
+unsigned long get_msec()
+{
+    struct timeval tval;
+    gettimeofday(&tval, NULL);
+    return tval.tv_sec * 1000 + (tval.tv_usec + 500) / 1000;
+}
+
 void print_help(char *strAppName, const char *strErrorMessage, ...)
 {
     if (strErrorMessage)
@@ -18,6 +25,7 @@ void print_help(char *strAppName, const char *strErrorMessage, ...)
     printf("Options:\n");
     printf("   [-w width]         - video width\n");
     printf("   [-h height]        - video height\n");
+    printf("   [-n num]           - frame numbers\n");
     printf("   [-log]             - output log files\n");
 }
 
@@ -165,6 +173,10 @@ int parse(char* argv[], int argc, Params* params)
             params->ref_video = new_videoinfo();
             strcpy(params->ref_video->filepath, argv[++i]);
         }
+        else if (0 == strcmp(argv[i], "-n"))
+        {
+            params->frames_num = atoi(argv[++i]);
+        }
         else if (0 == strcmp(argv[i], "-log"))
         {
             params->log = true;
@@ -289,6 +301,7 @@ int init_video(VideoInfo *vi, Params* params)
     vi->y_data = (uint8_t *)malloc(sizeof(uint8_t)*params->width*params->height);
     vi->u_data = (uint8_t *)malloc(sizeof(uint8_t)*params->width*params->height / 4);
     vi->v_data = (uint8_t *)malloc(sizeof(uint8_t)*params->width*params->height / 4);
+    vi->size = 0;
 
     return ERR_NONE;
 }
@@ -300,6 +313,7 @@ int get_frame(VideoInfo *vi, Params* params)
         if (1 != fread(vi->y_data, sizeof(uint8_t)*params->width*params->height, 1, vi->fp)) return 0;
         if (1 != fread(vi->u_data, sizeof(uint8_t)*params->width*params->height / 4, 1, vi->fp)) return 0;
         if (1 != fread(vi->v_data, sizeof(uint8_t)*params->width*params->height / 4, 1, vi->fp)) return 0;
+        vi->size += params->width*params->height*3/2;
         return 1;
     }
     else
@@ -328,6 +342,7 @@ int get_frame(VideoInfo *vi, Params* params)
                         memcpy(vi->u_data, vi->pFrame->data[1], sizeof(uint8_t)*params->width*params->height / 4);
                         memcpy(vi->v_data, vi->pFrame->data[2], sizeof(uint8_t)*params->width*params->height / 4);
                     }
+                    vi->size += vi->packet.size;
                     av_free_packet(&vi->packet);
                     return 1;
                 }
@@ -471,11 +486,13 @@ int main(int argc, char *argv[])
     int y_size = params->width*params->height;
     int uv_size = params->width*params->height / 4;
     int total_size = y_size + 2 * uv_size;
+    long last_msec = get_msec();
 
     printf("\n");
 
     while (get_frame(params->ref_video, params))
     {
+        int break_flag = 0;
         if (frames >= buffer_size)
         {
             buffer_size += 0xffff;
@@ -511,39 +528,51 @@ int main(int argc, char *argv[])
 #pragma omp parallel for
         for (int i = 0; i < params->video_num; i++)
         {
-            get_frame(params->video[i], params);
-            double y_mse = 0.0, u_mse = 0.0, v_mse = 0.0, total_mse = 0.0;
-            double diff = 0.0;
-            for (int j = 0; j < y_size; j++)
+            if (get_frame(params->video[i], params))
             {
-                diff = params->video[i]->y_data[j] - params->ref_video->y_data[j];
-                y_mse += diff * diff;
+                double y_mse = 0.0, u_mse = 0.0, v_mse = 0.0, total_mse = 0.0;
+                double diff = 0.0;
+                for (int j = 0; j < y_size; j++)
+                {
+                    diff = params->video[i]->y_data[j] - params->ref_video->y_data[j];
+                    y_mse += diff * diff;
+                }
+                for (int j = 0; j < uv_size; j++)
+                {
+                    diff = params->video[i]->u_data[j] - params->ref_video->u_data[j];
+                    u_mse += diff * diff;
+                    diff = params->video[i]->v_data[j] - params->ref_video->v_data[j];
+                    v_mse += diff * diff;
+                }
+                total_mse = y_mse + u_mse + v_mse;
+                params->video[i]->psnr[frames] = total_mse > 0.0 ? 20 * (log10(255 / sqrt(total_mse / total_size))) : 100;
+                params->video[i]->y_psnr[frames] = y_mse > 0.0 ? 20 * (log10(255 / sqrt(y_mse / y_size))) : 100;
+                params->video[i]->u_psnr[frames] = u_mse > 0.0 ? 20 * (log10(255 / sqrt(u_mse / uv_size))) : 100;
+                params->video[i]->v_psnr[frames] = v_mse > 0.0 ? 20 * (log10(255 / sqrt(v_mse / uv_size))) : 100;
+                params->video[i]->ssim[frames] = x264_pixel_ssim_wxh(params->ref_video->y_data, params->width, params->video[i]->y_data, params->width, params->width, params->height);
+                params->video[i]->psnr_mean += params->video[i]->psnr[frames];
+                params->video[i]->y_psnr_mean += params->video[i]->y_psnr[frames];
+                params->video[i]->u_psnr_mean += params->video[i]->u_psnr[frames];
+                params->video[i]->v_psnr_mean += params->video[i]->v_psnr[frames];
+                params->video[i]->ssim_mean += params->video[i]->ssim[frames];
             }
-            for (int j = 0; j < uv_size; j++)
+            else
             {
-                diff = params->video[i]->u_data[j] - params->ref_video->u_data[j];
-                u_mse += diff * diff;
-                diff = params->video[i]->v_data[j] - params->ref_video->v_data[j];
-                v_mse += diff * diff;
+                break_flag = 1;
             }
-            total_mse = y_mse + u_mse + v_mse;
-            params->video[i]->psnr[frames] = total_mse > 0.0 ? 20 * (log10(255 / sqrt(total_mse / total_size))) : 100;
-            params->video[i]->y_psnr[frames] = y_mse > 0.0 ? 20 * (log10(255 / sqrt(y_mse / y_size))) : 100;
-            params->video[i]->u_psnr[frames] = u_mse > 0.0 ? 20 * (log10(255 / sqrt(u_mse / uv_size))) : 100;
-            params->video[i]->v_psnr[frames] = v_mse > 0.0 ? 20 * (log10(255 / sqrt(v_mse / uv_size))) : 100;
-            params->video[i]->ssim[frames] = x264_pixel_ssim_wxh(params->ref_video->y_data, params->width, params->video[i]->y_data, params->width, params->width, params->height);
-            params->video[i]->psnr_mean += params->video[i]->psnr[frames];
-            params->video[i]->y_psnr_mean += params->video[i]->y_psnr[frames];
-            params->video[i]->u_psnr_mean += params->video[i]->u_psnr[frames];
-            params->video[i]->v_psnr_mean += params->video[i]->v_psnr[frames];
-            params->video[i]->ssim_mean += params->video[i]->ssim[frames];
         }
+        if (break_flag)
+            break;
         frames++;
-        if (frames % 100 == 0)
+        long now_msec = get_msec();
+        if (now_msec - last_msec > 1000)
         {
             printf("\rframes: %d", frames);
             fflush(stdout);
+            last_msec = now_msec;
         }
+        if (params->frames_num && frames == params->frames_num)
+            break;
     }
 
     printf("\rtotal frames: %d\n\n", frames);
@@ -578,10 +607,11 @@ int main(int argc, char *argv[])
     for (int i = 0; i < params->video_num; i++)
     {
         printf("Video: %s\n", params->video[i]->filepath);
+        printf("Size: %0.2f MB\n", (float)params->video[i]->size/1024.0f/1024.0f);
         printf("Frames: %d\n", params->frames);
         printf("PSNR: mean %.3f Y %.3f U %.3f V %.3f stdv %.3f\n", params->video[i]->psnr_mean,
                params->video[i]->y_psnr_mean, params->video[i]->u_psnr_mean, params->video[i]->v_psnr_mean, params->video[i]->psnr_stdv);
-        printf("SSIM: mean %.3f (%.3fdB) stdv %.3f\n\n", params->video[i]->ssim_mean,
+        printf("SSIM: mean %.4f (%.3fdB) stdv %.4f\n\n", params->video[i]->ssim_mean,
                params->video[i]->ssim_mean < 1.0 ? -10 * (log10(1 - params->video[i]->ssim_mean)) : 100,
                params->video[i]->ssim_stdv);
         if (params->log)
@@ -593,10 +623,11 @@ int main(int argc, char *argv[])
             if (NULL != fp)
             {
                 fprintf(fp, "Video: %s\n", params->video[i]->filepath);
+                fprintf(fp, "Size: %0.2f MB\n", (float)params->video[i]->size/1024.0f/1024.0f);
                 fprintf(fp, "Frames: %d\n", params->frames);
                 fprintf(fp, "PSNR: mean %.3f Y %.3f U %.3f V %.3f stdv %.3f\n", params->video[i]->psnr_mean,
                         params->video[i]->y_psnr_mean, params->video[i]->u_psnr_mean, params->video[i]->v_psnr_mean, params->video[i]->psnr_stdv);
-                fprintf(fp, "SSIM: mean %.3f (%.3fdB) stdv %.3f\n\n", params->video[i]->ssim_mean,
+                fprintf(fp, "SSIM: mean %.4f (%.3fdB) stdv %.4f\n\n", params->video[i]->ssim_mean,
                         params->video[i]->ssim_mean < 1.0 ? -10 * (log10(1 - params->video[i]->ssim_mean)) : 100,
                         params->video[i]->ssim_stdv);
                 fprintf(fp, "Frame\tPSNR\tY_PSNR\tU_PSNR\tV_PSNR\tSSIM\n");
