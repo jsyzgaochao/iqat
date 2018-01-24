@@ -531,19 +531,70 @@ int main(int argc, char *argv[])
             if (get_frame(params->video[i], params))
             {
                 double y_mse = 0.0, u_mse = 0.0, v_mse = 0.0, total_mse = 0.0;
-                double diff = 0.0;
-                for (int j = 0; j < y_size; j++)
+                __m128i sumy, sumu, sumv, a, b, diff, diffl, diffh, sqsuml, sqsumh;
+                __m128 ssum;
+                register int j;
+                sumy = _mm_setzero_si128();
+                for (j = 0; j < (y_size / 16) * 16; j+=16)
                 {
-                    diff = params->video[i]->y_data[j] - params->ref_video->y_data[j];
+                    a = _mm_load_si128((__m128i *)&params->ref_video->y_data[j]);
+                    b = _mm_load_si128((__m128i *)&params->video[i]->y_data[j]);
+                    diff = _mm_sub_epi8(a, b);
+                    diffl = _mm_cvtepi8_epi16(diff);
+                    diff = _mm_shuffle_epi32(diff, 0x4e);
+                    diffh = _mm_cvtepi8_epi16(diff);
+                    sqsuml = _mm_madd_epi16(diffl, diffl);
+                    sqsumh = _mm_madd_epi16(diffh, diffh);
+                    sumy = _mm_add_epi32(sumy, sqsuml);
+                    sumy = _mm_add_epi32(sumy, sqsumh);
+                }
+                ssum = _mm_cvtepi32_ps(sumy);
+                y_mse = ssum[0]+ssum[1]+ssum[2]+ssum[3];
+                for (; j < y_size; j++)
+                {
+                    double diff = params->video[i]->y_data[j] - params->ref_video->y_data[j];
                     y_mse += diff * diff;
                 }
-                for (int j = 0; j < uv_size; j++)
+
+                sumu = _mm_setzero_si128();
+                sumv = _mm_setzero_si128();
+                for (j = 0; j < (uv_size / 16) * 16; j+=16)
                 {
+                    a = _mm_load_si128((__m128i *)&params->ref_video->u_data[j]);
+                    b = _mm_load_si128((__m128i *)&params->video[i]->u_data[j]);
+                    diff = _mm_sub_epi8(a, b);
+                    diffl = _mm_cvtepi8_epi16(diff);
+                    diff = _mm_shuffle_epi32(diff, 0x4e);
+                    diffh = _mm_cvtepi8_epi16(diff);
+                    sqsuml = _mm_madd_epi16(diffl, diffl);
+                    sqsumh = _mm_madd_epi16(diffh, diffh);
+                    sumu = _mm_add_epi32(sumu, sqsuml);
+                    sumu = _mm_add_epi32(sumu, sqsumh);
+
+                    a = _mm_load_si128((__m128i *)&params->ref_video->v_data[j]);
+                    b = _mm_load_si128((__m128i *)&params->video[i]->v_data[j]);
+                    diff = _mm_sub_epi8(a, b);
+                    diffl = _mm_cvtepi8_epi16(diff);
+                    diff = _mm_shuffle_epi32(diff, 0x4e);
+                    diffh = _mm_cvtepi8_epi16(diff);
+                    sqsuml = _mm_madd_epi16(diffl, diffl);
+                    sqsumh = _mm_madd_epi16(diffh, diffh);
+                    sumv = _mm_add_epi32(sumv, sqsuml);
+                    sumv = _mm_add_epi32(sumv, sqsumh);
+                }
+                ssum = _mm_cvtepi32_ps(sumu);
+                u_mse = ssum[0]+ssum[1]+ssum[2]+ssum[3];
+                ssum = _mm_cvtepi32_ps(sumv);
+                v_mse = ssum[0]+ssum[1]+ssum[2]+ssum[3];
+                for (; j < uv_size; j++)
+                {
+                    register double diff;
                     diff = params->video[i]->u_data[j] - params->ref_video->u_data[j];
                     u_mse += diff * diff;
                     diff = params->video[i]->v_data[j] - params->ref_video->v_data[j];
                     v_mse += diff * diff;
                 }
+                
                 total_mse = y_mse + u_mse + v_mse;
                 params->video[i]->psnr[frames] = total_mse > 0.0 ? 20 * (log10(255 / sqrt(total_mse / total_size))) : 100;
                 params->video[i]->y_psnr[frames] = y_mse > 0.0 ? 20 * (log10(255 / sqrt(y_mse / y_size))) : 100;

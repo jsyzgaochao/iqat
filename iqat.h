@@ -10,6 +10,7 @@
 #include <malloc.h>
 #include <sys/time.h>
 #include <sys/stat.h>
+#include <x86intrin.h>
 
 extern "C"
 {

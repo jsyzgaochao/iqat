@@ -5,7 +5,7 @@ prefix = /usr/local
 bindir = $(prefix)/bin
 
 CC = g++
-CFLAGS = -O3 -std=c++11 -D__STDC_CONSTANT_MACROS -fopenmp -Wall -Wno-sign-compare -Wno-write-strings -Wno-deprecated-declarations
+CFLAGS = -O3 -std=c++11 -D__STDC_CONSTANT_MACROS -fopenmp -msse4.2 -Wall -Wno-sign-compare -Wno-write-strings -Wno-deprecated-declarations
 LD = g++
 LDFLAGS = -fopenmp -lavutil -lavcodec -lavformat -lswscale
 STRIP = strip
