@@ -5,9 +5,11 @@ prefix = /usr/local
 bindir = $(prefix)/bin
 
 CC = g++
-CFLAGS = -O3 -std=c++11 -D__STDC_CONSTANT_MACROS -fopenmp -msse4.2 -Wall -Wno-sign-compare -Wno-write-strings -Wno-deprecated-declarations
+CFLAGS += -DUSE_OPENMP -DUSE_SIMD
+CFLAGS += -O3 -std=c++11 -D__STDC_CONSTANT_MACROS -fopenmp -msse4.2 -mavx
+CFLAGS += -Wall -Wno-sign-compare -Wno-write-strings -Wno-deprecated-declarations -Wno-unused-variable
 LD = g++
-LDFLAGS = -fopenmp -lavutil -lavcodec -lavformat -lswscale
+LDFLAGS += -fopenmp -lavutil -lavcodec -lavformat -lswscale
 STRIP = strip
 
 all: $(objects)

@@ -50,6 +50,7 @@ typedef struct
     int width;
     int height;
     int frames_num;
+    int interval_num;
     bool log;
     VideoInfo *ref_video;
     VideoInfo *video[256];
@@ -86,7 +87,7 @@ int check_params(Params* params);
 VideoInfo *new_videoinfo();
 int parse(char* argv[], int argc, Params* params);
 int init_video(VideoInfo *vi, Params* params);
-int get_frame(VideoInfo *vi, Params* params);
+int get_frame(VideoInfo *vi, Params* params, int skip);
 void free_video(VideoInfo *vi);
 
 void ssim_4x4x2_core(const uint8_t *pix1, int stride1,
